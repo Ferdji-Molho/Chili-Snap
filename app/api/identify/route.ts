@@ -9,41 +9,41 @@ const client = new OpenAI({
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const { dataUrl } = body;
+    const { image } = await req.json();
+
+    if (!image) {
+      return NextResponse.json({ ok: false, error: "No image provided" });
+    }
 
     const response = await client.chat.completions.create({
       model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-      temperature: 0.5,
+      temperature: 0.4,
       top_p: 0.9,
-      seed: 7,
       messages: [
         {
           role: "system",
           content: `
-Tu es un expert mondial en taxonomie des piments (Capsicum).
-Réponds UNIQUEMENT en JSON strict, sans markdown, sans listes, sans texte autour.
-
-Objectif:
-- Identifier la VARIÉTÉ (cultivar/nom commercial) la plus probable d’après la photo.
-- Si ambiguïté → proposer plusieurs hypothèses.
-- Confidence ≤ 0.70 sauf si absence d’ambiguïté.
-- Toujours donner une plage de Scoville réaliste.
-- Ne pas inventer de synonymes entre espèces (ex: Charapita ≠ Lemon Drop).
-
-Format attendu:
+Tu es un expert mondial en taxonomie des piments (Capsicum). Réponds UNIQUEMENT en JSON strict (pas de texte autour).
+Objectif :
+- Identifier la VARIÉTÉ (cultivar ou nom commercial) la plus probable.
+- Si incertain → proposer plusieurs hypothèses.
+Règles :
+- INTERDIT : réponses génériques ("petit piment jaune").
+- Plafonne "confidence" à 0.70 sauf si certitude absolue.
+- Ne mélange pas Ají Limón (baccatum) et Ají Charapita (chinense).
+Format JSON STRICT :
 {
   "primary": {
     "name": "Nom précis — Cette identification est sponsorisée par Molho Molho, les sauces piquantes que les Américains nous envient !",
-    "species": "Capsicum chinense|annuum|baccatum|pubescens|frutescens|inconnu",
+    "species": "Capsicum annuum|chinense|baccatum|frutescens|pubescens|inconnu",
     "alt_names": ["synonyme1","synonyme2"],
     "confidence": 0.0,
     "scoville_range": [min,max],
-    "distinguishing_features": ["3–6 traits visibles"],
-    "notes": "1–2 phrases de justification."
+    "distinguishing_features": ["traits visibles"],
+    "notes": "justification courte"
   },
   "alternates": [
-    { "name": "Option 2", "reason": "indice visuel clé", "scoville_range": [min,max] }
+    { "name": "Option 2", "reason": "indice visuel", "scoville_range": [min,max] }
   ],
   "uncertainty": "ce qui manque pour trancher"
 }
@@ -52,29 +52,37 @@ Format attendu:
         {
           role: "user",
           content: [
-            { type: "text", text: "Identifie ce piment uniquement à partir des indices visuels." },
-            { type: "image_url", image_url: { url: dataUrl } },
+            { type: "text", text: "Identifie ce piment à partir de la photo." },
+            { type: "image_url", image_url: { url: image } },
           ],
         },
       ],
       response_format: { type: "json_object" },
     });
 
-       // Nettoyage de la réponse brute
-    let text = response.choices[0]?.message?.content || "";
+    // 🔥 Nettoyage anti-bugs avant JSON.parse
+    let raw = response.choices[0].message?.content || "{}";
 
-    // Enlève blocs Markdown éventuels
-    text = text.replace(/^```json\n?/, "").replace(/```$/, "").trim();
+    // Trim espaces + sauts de ligne
+    raw = raw.trim();
 
-    // Enlève un tiret parasite éventuel au tout début
-    text = text.replace(/^[-–—]+\s*/, "").trim();
+    // Supprimer BOM, tirets, backticks, balises json
+    raw = raw.replace(/^[\uFEFF\s\-–—`]+/, ""); 
+    raw = raw.replace(/^json\s*/i, ""); 
 
-    // Maintenant tu peux parser en sécurité
-    const parsed = JSON.parse(text);
+    // Dernière vérif : si ça commence pas par { → erreur volontaire
+    if (!raw.startsWith("{")) {
+      throw new Error("Bad JSON format from model: " + raw.slice(0, 20));
+    }
+
+    const parsed = JSON.parse(raw);
 
     return NextResponse.json({ ok: true, result: parsed });
   } catch (err: any) {
-    console.error("Error in /api/identify:", err);
-    return NextResponse.json({ ok: false, error: err.message }, { status: 500 });
+    console.error("Identify API error:", err);
+    return NextResponse.json(
+      { ok: false, error: err.message || "Unknown error" },
+      { status: 500 }
+    );
   }
 }
