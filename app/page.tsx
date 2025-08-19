@@ -200,7 +200,7 @@ export default function Page() {
         <header className="flex flex-col items-center gap-2">
           <img src="https://cdn.shopify.com/s/files/1/0939/1403/8610/files/MOLHO_MOLHO_NOIR.png?v=1737379351" alt="Molho Molho Logo" className="h-16 w-auto" />
           <h1 className="text-2xl font-semibold">🌶️ ChiliSnap</h1>
-          <span className="text-xs text-gray-500">Identification de piments par IA • vos clés restent côté serveur</span>
+         <img src="https://cdn.shopify.com/s/files/1/0939/1403/8610/files/Molho.png?v=1748012258" alt="Molho Molho Clodo" className="h-16 w-auto" />
         </header>
 
         <div className="grid gap-4">
