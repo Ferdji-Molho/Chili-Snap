@@ -40,50 +40,81 @@ export default function Page() {
     setRaw(null);
   }
 
-  async function identify() {
-    if (!file) return;
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    setRaw(null);
+ async function identify() {
+  if (!file) return;
 
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
+  setLoading(true);
+  setError(null);
+  setData(null);
 
-      const res = await fetch("/api/identify", { method: "POST", body: fd });
-      const text = await res.text();
-      if (!text) {
-        setLoading(false);
-        setError("Réponse vide de l’API");
-        return;
-      }
-      let data: any = null;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        setLoading(false);
-        setError("Réponse non-JSON de l’API");
-        return;
-      }
+  // Time-out de 45s pour éviter de rester bloqué
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 45_000);
 
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+
+    const res = await fetch("/api/identify", {
+      method: "POST",
+      body: fd,
+      signal: controller.signal,
+    });
+
+    const text = await res.text(); // on lit toujours le body
+
+    // Pas de corps → message explicite
+    if (!text) {
+      setError(`Réponse vide (status ${res.status})`);
       setLoading(false);
-
-      if (!res.ok || data?.ok === false) {
-        const msg = [data?.error, data?.details].filter(Boolean).join(" — ");
-        setError(msg || `Erreur API (status ${res.status})`);
-        return;
-      }
-
-      const payload = (data.result ?? data.raw ?? data) as PepperResult;
-      setRaw(data);
-      if ((payload as any)?.primary?.name) setResult(payload);
-      else setError("Réponse AI incomplète");
-    } catch (err: any) {
-      setLoading(false);
-      setError(err?.message || "Erreur réseau");
+      return;
     }
+
+    // Si HTTP non OK, on montre le début du message d'erreur renvoyé par l’API
+    if (!res.ok) {
+      let detail = text.slice(0, 300).trim();
+      if (res.status === 413) detail = "Fichier trop volumineux (max ~3 Mo).";
+      if (res.status === 415) detail = "Type de fichier non supporté (jpg, png, webp, heic/heif).";
+      setError(`Erreur API (status ${res.status}) — ${detail}`);
+      setLoading(false);
+      return;
+    }
+
+    // Tentative de parsing JSON (avec nettoyage léger au cas où)
+    let parsed: any = null;
+    try {
+      const cleaned = text
+        .trim()
+        .replace(/^```json\s*/i, "")
+        .replace(/```$/i, "")
+        .replace(/^[^\{]*/, ""); // coupe tout avant la première '{'
+      parsed = JSON.parse(cleaned);
+    } catch {
+      setError(`Réponse non JSON (status ${res.status}) : ${text.slice(0, 200)}`);
+      setLoading(false);
+      return;
+    }
+
+    // Certains endpoints renvoient { ok:false, error:... }
+    if (parsed && parsed.ok === false) {
+      setError(parsed.error || "Erreur renvoyée par l'API");
+      setLoading(false);
+      return;
+    }
+
+    setData(parsed);
+    setLoading(false);
+  } catch (e: any) {
+    if (e?.name === "AbortError") {
+      setError("Temps dépassé. Réessaie avec une image plus légère ou réseau meilleur.");
+    } else {
+      setError(e?.message || "Erreur réseau");
+    }
+    setLoading(false);
+  } finally {
+    clearTimeout(timer);
   }
+}
 
   function heatBadge([min, max]: [number, number]) {
     const fmt = (n: number) =>
