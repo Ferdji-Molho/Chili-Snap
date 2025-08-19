@@ -5,8 +5,8 @@ import { Inter } from 'next/font/google';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'ChiliSnap - AI Pepper Identifier',
-  description: 'Identify chili pepper varieties using AI vision technology',
+  title: 'ChiliSnap - Pepper Identifier',
+  description: 'Identify chili pepper varieties',
 };
 
 export default function RootLayout({
