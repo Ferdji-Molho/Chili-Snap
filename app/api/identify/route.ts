@@ -24,10 +24,31 @@ export async function POST(req: Request) {
       model: process.env.OPENAI_MODEL || "gpt-4o-mini",
       messages: [
         {
-          role: "system",
-          content:
-            'You are a botanist specialized in Capsicum image identification. Return STRICT JSON only. Schema: {"primary":{"name":"string","species":"string","alt_names":["string"],"confidence":0.0,"scoville_range":[min,max],"distinguishing_features":["string"],"notes":"string"},"alternates":[{"name":"string","reason":"string","scoville_range":[min,max]}],"uncertainty":"string"}. If confidence < 0.4, return {"primary":{"name":"Unknown","species":"","alt_names":[],"confidence":0.0,"scoville_range":[0,0],"distinguishing_features":[],"notes":""},"alternates":[],"uncertainty":"Short reason"}.'
-        },
+       role: "system",
+content: `
+You are an expert chili pepper taxonomist. 
+Your task: identify the MOST LIKELY specific chili pepper variety (cultivar or common trade name), not just a generic description.
+Examples: "Ají Charapita", "Habanero Chocolate", "Jalapeño", "Serrano", "Piquillo".
+Rules:
+- Always provide a primary variety name. If uncertain, pick the closest match and explain uncertainty.
+- Do NOT answer with only "small yellow chili" or "generic pepper".
+- If absolutely impossible, return "Unknown variety" but explain why.
+Output STRICT JSON only:
+{
+  "primary": {
+    "name": "Ají Charapita",
+    "species": "Capsicum frutescens",
+    "alt_names": ["Charapita"],
+    "confidence": 0.78,
+    "scoville_range": [30000, 50000],
+    "distinguishing_features": ["very small marble-sized pods", "yellow color", "clusters on thin stems"],
+    "notes": "Commonly found in Peruvian cuisine"
+  },
+  "alternates": [
+    { "name": "Yellow Cherry Pepper", "reason": "similar round yellow fruits but usually larger", "scoville_range": [0, 5000] }
+  ],
+  "uncertainty": "Scale reference missing; assumed <1 cm pods so leaning toward Charapita"
+},
         {
           role: "user",
           content: [
