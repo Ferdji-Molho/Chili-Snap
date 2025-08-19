@@ -4,7 +4,6 @@ export const runtime = "nodejs";
 
 const ALLOWED = ["image/jpeg", "image/png", "image/webp"];
 
-// Prompt clair: on force un *nom de variété* (pas "petit piment jaune")
 const systemContent = `You are an expert chili pepper taxonomist.
 Identify the MOST LIKELY specific chili pepper variety (cultivar or common trade name), not a generic description.
 Examples: "Ají Charapita", "Habanero Chocolate", "Jalapeño", "Serrano", "Piquillo".
@@ -84,3 +83,21 @@ export async function POST(req: Request) {
     const ai = await resp.json().catch(() => null);
     const content: string | undefined = ai?.choices?.[0]?.message?.content;
     if (!content) {
+      return NextResponse.json({ ok: false, error: "No JSON content from model" }, { status: 500 });
+    }
+
+    try {
+      const parsed = JSON.parse(content);
+      return NextResponse.json({ ok: true, result: parsed }, { status: 200 });
+    } catch {
+      return NextResponse.json({ ok: true, raw: content }, { status: 200 });
+    }
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || "Server error" }, { status: 500 });
+  }
+}
+
+// test GET
+export async function GET() {
+  return NextResponse.json({ ok: true, endpoint: "identify" });
+}
