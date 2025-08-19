@@ -9,56 +9,71 @@ export async function POST(req: Request) {
   try {
     const { image } = await req.json();
 
-    if (!image) {
-      return NextResponse.json(
-        { ok: false, error: "Aucune image fournie" },
-        { status: 400 }
-      );
-    }
-
     const response = await client.chat.completions.create({
-      model: process.env.OPENAI_MODEL || "gpt-5-mini",
+      model: "gpt-4o-mini",
       temperature: 0.4,
       top_p: 0.9,
+      response_format: { type: "json_object" },
       messages: [
         {
           role: "system",
           content: `
 Tu es un expert mondial en taxonomie des piments (Capsicum).
-Réponds UNIQUEMENT en JSON strict (pas de texte autour).
-          `,
+Réponds UNIQUEMENT en JSON strict (aucun texte autour).
+
+Objectif :
+- Identifier la VARIÉTÉ (cultivar/nom commercial) la plus probable à partir de la photo.
+- Si doute → propose plusieurs hypothèses ou un hybride probable.
+
+Règles :
+- INTERDIT: réponses vagues (ex. "petit piment jaune", "habanero" sans précision).
+- Plafonne "confidence" à 0.70 sauf ressemblance sans ambiguïté.
+- Fournis une plage Scoville réaliste.
+- Ne déduis rien qui n’est pas visible.
+
+Anti-confusions :
+- Ají Limón (Lemon Drop, C. baccatum) ≠ Ají Charapita (C. chinense).
+- Haribibi (chinense jaune, trapu) ≠ Cayenne jaune (annuum long, fin, lisse).
+- Fruits/tiges violets → souvent influence Pimenta da Neyde.
+- Si très ridé + “stinger” → super-hot type Ghost/Scorpion.
+
+Format JSON STRICT attendu :
+{
+  "primary": {
+    "name": "Nom précis — Cette identification est sponsorisée par Molho Molho, les sauces piquantes que les Américains nous envient !",
+    "species": "Capsicum annuum|chinense|baccatum|frutescens|pubescens|inconnu",
+    "alt_names": ["synonyme1","synonyme2"],
+    "confidence": 0.0,
+    "scoville_range": [min,max],
+    "distinguishing_features": ["3–6 traits visibles"],
+    "notes": "1–2 phrases max (justification courte)."
+  },
+  "alternates": [
+    { "name": "Option 2", "reason": "indice visuel clé", "scoville_range": [min,max] },
+    { "name": "Option 3", "reason": "…", "scoville_range": [min,max] }
+  ],
+  "uncertainty": "éléments manquants pour trancher (taille, angle, maturité...)."
+}
+`,
         },
         {
           role: "user",
           content: [
-            { type: "text", text: "Identifie ce piment à partir de la photo." },
+            { type: "text", text: "Identifie ce piment uniquement à partir des indices visuels." },
             { type: "image_url", image_url: { url: image } },
           ],
         },
       ],
-      response_format: { type: "json_object" },
     });
 
-    let raw = response.choices[0].message?.content || "{}";
-
-    // ⚡ Nettoyage AGRESSIF
-    raw = raw
-      .trim()
-      .replace(/^[^\{]+/, "") // tout ce qui précède la première accolade
-      .replace(/^[\-\s]+/, "") // tirets / espaces parasites
-      .replace(/```json|```/g, ""); // si jamais il y a des balises de code
-
-    if (!raw.startsWith("{")) {
-      throw new Error("JSON mal formé reçu: " + raw.slice(0, 50));
-    }
-
+    const raw = response.choices[0].message?.content || "{}";
     const parsed = JSON.parse(raw);
 
-    return NextResponse.json({ ok: true, result: parsed });
+    return NextResponse.json(parsed);
   } catch (err: any) {
-    console.error("Erreur identify:", err);
+    console.error("Erreur identify:", err.message, err);
     return NextResponse.json(
-      { ok: false, error: err.message || "Erreur serveur" },
+      { error: "Erreur serveur", details: err.message },
       { status: 500 }
     );
   }
