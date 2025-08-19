@@ -1,31 +1,39 @@
-// Réglages conseillés
-const model = process.env.OPENAI_MODEL || "gpt-4o";
-const temperature = 0.1;
-const top_p = 0.2;
-const seed = 7;
+import { NextResponse } from "next/server";
+import OpenAI from "openai";
 
-// ⬇️ Remplace ton messages: [...] par ceci
-messages: [
-  {
-    role: "system",
-    content: `
+export const runtime = "nodejs";
+
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
+});
+
+export async function POST(req: Request) {
+  try {
+    const { image } = await req.json();
+
+    const response = await client.chat.completions.create({
+      model: "gpt-5-mini", // ou "gpt-4o-mini"
+      messages: [
+        {
+          role: "system",
+          content: `
 Tu es un expert mondial en taxonomie des piments (Capsicum).
 Réponds UNIQUEMENT en français, en JSON strict (pas de texte autour).
 
 Objectif:
-- Donner la VARIÉTÉ (cultivar/nom commercial) la plus probable d’après la photo.
-- Si le match n’est pas net, propose plusieurs hypothèses et indique qu’il peut s’agir d’un HYBRIDE.
+- Identifier la VARIÉTÉ (cultivar/nom commercial) la plus probable d’après la photo.
+- Si incertain : propose plusieurs hypothèses et précise si hybride possible.
 
 Règles:
-- INTERDIT: réponses génériques (“petit piment jaune”, “habanero” sans précision).
-- Plafonne "confidence" à 0.70 sauf ressemblance sans ambiguïté.
-- Donne une plage de Scoville réaliste (ex. 30 000–50 000).
+- INTERDIT: réponses vagues ("petit piment jaune", "habanero" sans précision).
+- Plafonne "confidence" à 0.70 sauf si correspondance sans ambiguïté.
+- Donne une plage de Scoville réaliste.
 - Ne déduis rien qui n’est pas visible.
 
 Anti-confusions:
-- Ají Limón/Lemon Drop (C. baccatum) ≠ Ají Charapita (C. chinense) → jamais synonymes.
-- Haribibi (C. chinense, jaune/ivoire, parfois long et un peu bosselé) ≠ Cayenne jaune (annuum long, fin, lisse).
-- Lignes pourpres (fruit/tiges/feuilles violets) → souvent influence Pimenta da Neyde; si très ridé + “stinger” → super-hot type Ghost/Scorpion.
+- Ají Limón/Lemon Drop (C. baccatum) ≠ Ají Charapita (C. chinense).
+- Haribibi (C. chinense, jaune/ivoire, trapu) ≠ Cayenne jaune (annuum long, fin, lisse).
+- Lignes pourpres = influence Pimenta da Neyde; très ridé + "stinger" = super-hot (Ghost/Scorpion).
 
 Format JSON STRICT:
 {
@@ -40,22 +48,32 @@ Format JSON STRICT:
   },
   "alternates": [
     { "name": "Option 2", "reason": "indice visuel clé", "scoville_range": [min,max] },
-    { "name": "Option 3", "reason": "…", "scoville_range": [min,max] },
-    { "name": "Option 4", "reason": "…", "scoville_range": [min,max] }
+    { "name": "Option 3", "reason": "…", "scoville_range": [min,max] }
   ],
   "uncertainty": "ce qui manque pour trancher (échelle, angle, maturité...)."
 }
-- N’insère JAMAIS la phrase sponsor dans alt_names.`
-  },
-  {
-    role: "user",
-    content: [
-      { type: "text", text: "Identifie ce piment uniquement à partir des indices visuels. Donne un nom de variété précis ou un hybride probable." },
-      { type: "image_url", image_url: { url: dataUrl } }
-    ]
+- N’insère JAMAIS la phrase sponsor dans alt_names.
+          `,
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Identifie ce piment uniquement à partir des indices visuels. Donne un nom de variété précis ou un hybride probable." },
+            { type: "image_url", image_url: { url: image } },
+          ],
+        },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.5,
+      top_p: 0.9,
+      seed: 7,
+    });
+
+    return NextResponse.json({
+      ok: true,
+      result: JSON.parse(response.choices[0].message.content || "{}"),
+    });
+  } catch (err: any) {
+    return NextResponse.json({ ok: false, error: err.message }, { status: 500 });
   }
-],
-response_format: { type: "json_object" },
-temperature,
-top_p,
-seed
+}
