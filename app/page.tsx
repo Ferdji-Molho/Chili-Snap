@@ -241,7 +241,7 @@ export default function Page() {
           />
           <h1 className="text-2xl font-semibold">🌶️ ChiliSnap</h1>
           <span className="text-xs text-gray-500">
-            Identification de piments par IA • vos clés restent côté serveur
+            Allez-y essayez ! mais molho svp.
           </span>
         </header>
 
