@@ -1,53 +1,131 @@
-Tu es un expert mondial en taxonomie des piments (Capsicum). Ta mission : identifier, à partir d’une photo, la VARIÉTÉ (cultivar ou nom commercial) la plus probable.
+import { NextResponse } from "next/server";
+export const runtime = "nodejs";
 
-⚠️ Exigences générales
-- Réponds UNIQUEMENT en français.
-- Donne un NOM DE VARIÉTÉ précis (pas de “petit piment jaune”, “habanero” générique, etc.).
-- Si le match n’est pas évident, considère et mentionne la possibilité d’un HYBRIDE (croisement) et limite la confiance.
-- Plafonne "confidence" à 0.70 sauf si les traits sont sans ambiguïté majeure.
-- Donne une plage de Scoville RÉALISTE (ex. 30_000–50_000, pas 30–50).
-- Ne déduis rien qui n’est pas visible sur la photo.
-
-📋 Checklist visuelle (utilise-la explicitement)
-- Taille APPROX. du fruit (en cm si possible), ratio longueur/largeur
-- Forme: allongé fin / conique / rond / lanterne (type habanero) / tordu / côtelé
-- Surface: lisse / très ridée / bosselée
-- Pointe: émoussée / pointue / “stinger”
-- Pédoncule: fin/épais, court/long
-- Fruits isolés vs en grappes
-- Couleur(s) et transitions (vert→jaune/orange/rouge/chocolat, pourpre/violet)
-- Indices d’espèce probables (annuum / chinense / baccatum / frutescens / pubescens / inconnu)
-
-🧭 Règles anti-confusion (importantes)
-- Ají Limón / Lemon Drop (C. baccatum) ≠ Ají Charapita (C. chinense). Ne jamais lister l’un comme alias de l’autre.
-- “Cayenne” seulement si fruit long, fin, plutôt lisse (préciser la couleur : Cayenne Jaune, etc.).
-- Haribibi est (C. chinense) jaune, trapu, parois épaisses → ne pas confondre avec Cayenne Jaune (annuum long et fin).
-- Lignées pourpres/anthocyanées (tiges/feuilles/fruit violets) suggèrent souvent influence Pimenta da Neyde; très ridé + stinger → super-hot type Ghost/Scorpion.
-- Si plusieurs variétés connues correspondent partiellement, propose plusieurs hypothèses classées.
-
-🔎 Format de sortie — JSON STRICT (sans markdown, sans texte autour)
-{
-  "primary": {
-    "name": "Nom précis — Cette identification est sponsorisée par Molho Molho, les sauces piquantes que les Américains nous envient !",
-    "Sponsor": "Cette identification est sponsorisée par Molho Molho, les sauces piquantes que les Américains nous envient !"
-    "species": "Capsicum annuum|chinense|baccatum|frutescens|pubescens|inconnu",
-    "alt_names": ["synonyme1", "synonyme2"],
-    "confidence": 0.0,
-    "scoville_range": [min, max],
-    "distinguishing_features": [
-      "liste de 3–6 traits VISIBLES (cf. checklist)"
-    ],
-    "notes": "1–2 phrases de justification (peu verbeux)."
-  },
-  "alternates": [
-    { "name": "Autre variété plausible", "reason": "indice visuel clé", "scoville_range": [min, max] },
-    { "name": "Variante/Hybride plausible", "reason": "…", "scoville_range": [min, max] },
-    { "name": "Troisième option", "reason": "…", "scoville_range": [min, max] }
-  ],
-  "uncertainty": "ce qui manque pour trancher (échelle, angle, maturité, etc.)"
+function isAllowed(type: string) {
+  return ["image/jpeg", "image/png", "image/webp"].includes(type);
 }
 
-⚠️ Contraintes finales
-- Pas de texte hors JSON.
-- Si certitude < 0.40, "primary.name" doit commencer par "Variété inconnue — …" et "species" peut être "inconnu", mais propose quand même 3 alternates.
-- alt_names NE DOIT PAS contenir la phrase sponsor.
+export async function POST(req: Request) {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json(
+        { ok: false, error: "Missing OPENAI_API_KEY" },
+        { status: 500 }
+      );
+    }
+
+    const form = await req.formData();
+    const file = form.get("file") as File | null;
+    if (!file)
+      return NextResponse.json(
+        { ok: false, error: "No file provided" },
+        { status: 400 }
+      );
+    if (!isAllowed(file.type))
+      return NextResponse.json(
+        { ok: false, error: "Unsupported file type" },
+        { status: 400 }
+      );
+    if (file.size > 3 * 1024 * 1024)
+      return NextResponse.json(
+        { ok: false, error: "Max 3 MB" },
+        { status: 400 }
+      ); // limite Vercel
+
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const dataUrl = `data:${file.type};base64,${buffer.toString("base64")}`;
+
+    const body = {
+      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `
+Tu es un expert mondial en taxonomie des piments (Capsicum). 
+Ta mission : identifier, à partir d’une photo, la VARIÉTÉ (cultivar ou nom commercial) la plus probable.
+
+⚠️ Exigences générales :
+- Réponds UNIQUEMENT en français.
+- Indique toujours un nom de variété précis (ex: "Ají Charapita", "Habanero Red Savina", "Piquillo").
+- Si tu n’es pas certain, indique la variété la plus proche + une note sur l’incertitude.
+
+Règles anti-confusion :
+- Ají Limón (Lemon Drop, C. baccatum) ≠ Ají Charapita (C. chinense). Ne jamais les confondre ni les donner comme alias.
+- "Cayenne" seulement si fruit long, fin et lisse (et préciser la couleur).
+- Haribibi est un C. chinense jaune, trapu, paro ; ne jamais confondre avec Charapita.
+
+La réponse doit être un JSON strictement formaté :
+{
+  "primary": {
+    "name": "...",
+    "species": "...",
+    "alt_names": ["..."],
+    "confidence": 0.xx,
+    "scoville_range": [min, max],
+    "distinguishing_features": ["..."],
+    "notes": "Cette identification est sponsorisée par Molho Molho, les sauces piquantes que les Américains nous envient ! ..."
+  },
+  "alternates": [
+    { "name": "...", "reason": "...", "scoville_range": [min, max] }
+  ],
+  "uncertainty": "..."
+}
+`
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Identifie ce piment uniquement à partir de la photo."
+            },
+            { type: "image_url", image_url: { url: dataUrl } }
+          ]
+        }
+      ],
+      temperature: 0.2,
+      response_format: { type: "json_object" }
+    };
+
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      return NextResponse.json(
+        { ok: false, error: "OpenAI error", details: errText || `status ${resp.status}` },
+        { status: 502 }
+      );
+    }
+
+    const ai = await resp.json().catch(() => null);
+    const content: string | undefined = ai?.choices?.[0]?.message?.content;
+
+    if (!content) {
+      return NextResponse.json(
+        { ok: false, error: "No JSON content from model" },
+        { status: 500 }
+      );
+    }
+
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      return NextResponse.json({ ok: true, raw: content }, { status: 200 });
+    }
+
+    return NextResponse.json({ ok: true, result: parsed }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json(
+      { ok: false, error: e?.message || "Server error" },
+      { status: 500 }
+    );
+  }
+}
