@@ -60,11 +60,16 @@ Format attendu:
       response_format: { type: "json_object" },
     });
 
-    // Nettoyage de la réponse brute
+       // Nettoyage de la réponse brute
     let text = response.choices[0]?.message?.content || "";
-    text = text.replace(/^```json\n?/, "").replace(/```$/, "").trim();
-    if (text.startsWith("-")) text = text.slice(1).trim();
 
+    // Enlève blocs Markdown éventuels
+    text = text.replace(/^```json\n?/, "").replace(/```$/, "").trim();
+
+    // Enlève un tiret parasite éventuel au tout début
+    text = text.replace(/^[-–—]+\s*/, "").trim();
+
+    // Maintenant tu peux parser en sécurité
     const parsed = JSON.parse(text);
 
     return NextResponse.json({ ok: true, result: parsed });
