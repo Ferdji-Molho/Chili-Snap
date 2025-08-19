@@ -51,7 +51,6 @@ export async function POST(req: Request) {
     // NB: API chat avec image
     const completion = await client.chat.completions.create({
       model,
-      temperature: 0.2,
       messages: [
         { role: "system", content: sys },
         {
