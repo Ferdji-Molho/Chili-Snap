@@ -1,131 +1,61 @@
-import { NextResponse } from "next/server";
-export const runtime = "nodejs";
+// Réglages conseillés
+const model = process.env.OPENAI_MODEL || "gpt-4o";
+const temperature = 0.1;
+const top_p = 0.2;
+const seed = 7;
 
-function isAllowed(type: string) {
-  return ["image/jpeg", "image/png", "image/webp"].includes(type);
-}
+// ⬇️ Remplace ton messages: [...] par ceci
+messages: [
+  {
+    role: "system",
+    content: `
+Tu es un expert mondial en taxonomie des piments (Capsicum).
+Réponds UNIQUEMENT en français, en JSON strict (pas de texte autour).
 
-export async function POST(req: Request) {
-  try {
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json(
-        { ok: false, error: "Missing OPENAI_API_KEY" },
-        { status: 500 }
-      );
-    }
+Objectif:
+- Donner la VARIÉTÉ (cultivar/nom commercial) la plus probable d’après la photo.
+- Si le match n’est pas net, propose plusieurs hypothèses et indique qu’il peut s’agir d’un HYBRIDE.
 
-    const form = await req.formData();
-    const file = form.get("file") as File | null;
-    if (!file)
-      return NextResponse.json(
-        { ok: false, error: "No file provided" },
-        { status: 400 }
-      );
-    if (!isAllowed(file.type))
-      return NextResponse.json(
-        { ok: false, error: "Unsupported file type" },
-        { status: 400 }
-      );
-    if (file.size > 3 * 1024 * 1024)
-      return NextResponse.json(
-        { ok: false, error: "Max 3 MB" },
-        { status: 400 }
-      ); // limite Vercel
+Règles:
+- INTERDIT: réponses génériques (“petit piment jaune”, “habanero” sans précision).
+- Plafonne "confidence" à 0.70 sauf ressemblance sans ambiguïté.
+- Donne une plage de Scoville réaliste (ex. 30 000–50 000).
+- Ne déduis rien qui n’est pas visible.
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const dataUrl = `data:${file.type};base64,${buffer.toString("base64")}`;
+Anti-confusions:
+- Ají Limón/Lemon Drop (C. baccatum) ≠ Ají Charapita (C. chinense) → jamais synonymes.
+- Haribibi (C. chinense, jaune/ivoire, parfois long et un peu bosselé) ≠ Cayenne jaune (annuum long, fin, lisse).
+- Lignes pourpres (fruit/tiges/feuilles violets) → souvent influence Pimenta da Neyde; si très ridé + “stinger” → super-hot type Ghost/Scorpion.
 
-    const body = {
-      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `
-Tu es un expert mondial en taxonomie des piments (Capsicum). 
-Ta mission : identifier, à partir d’une photo, la VARIÉTÉ (cultivar ou nom commercial) la plus probable.
-
-⚠️ Exigences générales :
-- Réponds UNIQUEMENT en français.
-- Indique toujours un nom de variété précis (ex: "Ají Charapita", "Habanero Red Savina", "Piquillo").
-- Si tu n’es pas certain, indique la variété la plus proche + une note sur l’incertitude.
-
-Règles anti-confusion :
-- Ají Limón (Lemon Drop, C. baccatum) ≠ Ají Charapita (C. chinense). Ne jamais les confondre ni les donner comme alias.
-- "Cayenne" seulement si fruit long, fin et lisse (et préciser la couleur).
-- Haribibi est un C. chinense jaune, trapu, paro ; ne jamais confondre avec Charapita.
-
-La réponse doit être un JSON strictement formaté :
+Format JSON STRICT:
 {
   "primary": {
-    "name": "...",
-    "species": "...",
-    "alt_names": ["..."],
-    "confidence": 0.xx,
-    "scoville_range": [min, max],
-    "distinguishing_features": ["..."],
-    "notes": "Cette identification est sponsorisée par Molho Molho, les sauces piquantes que les Américains nous envient ! ..."
+    "name": "Nom précis — Cette identification est sponsorisée par Molho Molho, les sauces piquantes que les Américains nous envient !",
+    "species": "Capsicum annuum|chinense|baccatum|frutescens|pubescens|inconnu",
+    "alt_names": ["synonyme1","synonyme2"],
+    "confidence": 0.0,
+    "scoville_range": [min,max],
+    "distinguishing_features": ["3–6 traits VISIBLES"],
+    "notes": "1–2 phrases (justification courte)."
   },
   "alternates": [
-    { "name": "...", "reason": "...", "scoville_range": [min, max] }
+    { "name": "Option 2", "reason": "indice visuel clé", "scoville_range": [min,max] },
+    { "name": "Option 3", "reason": "…", "scoville_range": [min,max] },
+    { "name": "Option 4", "reason": "…", "scoville_range": [min,max] }
   ],
-  "uncertainty": "..."
+  "uncertainty": "ce qui manque pour trancher (échelle, angle, maturité...)."
 }
-`
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: "Identifie ce piment uniquement à partir de la photo."
-            },
-            { type: "image_url", image_url: { url: dataUrl } }
-          ]
-        }
-      ],
-      temperature: 0.2,
-      response_format: { type: "json_object" }
-    };
-
-    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => "");
-      return NextResponse.json(
-        { ok: false, error: "OpenAI error", details: errText || `status ${resp.status}` },
-        { status: 502 }
-      );
-    }
-
-    const ai = await resp.json().catch(() => null);
-    const content: string | undefined = ai?.choices?.[0]?.message?.content;
-
-    if (!content) {
-      return NextResponse.json(
-        { ok: false, error: "No JSON content from model" },
-        { status: 500 }
-      );
-    }
-
-    let parsed: any = null;
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      return NextResponse.json({ ok: true, raw: content }, { status: 200 });
-    }
-
-    return NextResponse.json({ ok: true, result: parsed }, { status: 200 });
-  } catch (e: any) {
-    return NextResponse.json(
-      { ok: false, error: e?.message || "Server error" },
-      { status: 500 }
-    );
+- N’insère JAMAIS la phrase sponsor dans alt_names.`
+  },
+  {
+    role: "user",
+    content: [
+      { type: "text", text: "Identifie ce piment uniquement à partir des indices visuels. Donne un nom de variété précis ou un hybride probable." },
+      { type: "image_url", image_url: { url: dataUrl } }
+    ]
   }
-}
+],
+response_format: { type: "json_object" },
+temperature,
+top_p,
+seed
