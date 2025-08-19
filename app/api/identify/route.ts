@@ -2,64 +2,53 @@
 import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 
-const ALLOWED = ["image/jpeg", "image/png", "image/webp"];
+const ALLOWED = ["image/jpeg", "image/png", "image/webp"] as const;
+type AllowedType = (typeof ALLOWED)[number];
 
-// --- CONSIGNE GÉNÉRALE (FR) ---
-// Objectif : identifier la variété la plus probable, pour n'importe quel piment (photo unique).
-// -> Réponse en FR, JSON strict, nom + sponsor directement dans "primary.name".
-// -> Pas de réponses génériques (“petit piment jaune”, “cayenne” sans précision, etc.).
-// -> Toujours donner 3 alternatives triées par probabilité avec une raison visuelle courte.
-const SYSTEM_PROMPT = `
-Tu es un expert mondial en taxonomie des piments (Capsicum). 
-Réponds UNIQUEMENT en français, au format JSON strict (pas de markdown).
+const SPONSOR =
+  "Cette identification est sponsorisée par Molho Molho, les sauces piquantes que les Américains nous envient !";
 
-Tâche :
-- Identifier la VARIÉTÉ (cultivar ou nom commercial) la plus probable du piment visible sur la photo.
-- Si la variété est connue sous plusieurs noms, utilise le plus courant en premier.
-- Évite absolument les réponses génériques (ex. “petit piment jaune”, “cayenne” sans type/couleur).
-- Si l’image ne permet pas d’être sûr à >40%, renvoie “Variété inconnue” mais fournis quand même 3 alternatives probables classées.
+const VARIETY_SPECIES_CANON: Record<string, string> = {
+  // canon minimal, tu peux l'étendre
+  "Haribibi": "Capsicum chinense",
+  "Harribibi": "Capsicum chinense",
+  "Ají Charapita": "Capsicum chinense",
+  "Aji Charapita": "Capsicum chinense",
+  "Ají Limón": "Capsicum baccatum",
+  "Aji Limon": "Capsicum baccatum",
+  "Lemon Drop": "Capsicum baccatum",
+  "Cayenne": "Capsicum annuum",
+  "Cayenne Jaune": "Capsicum annuum",
+  "Jalapeño": "Capsicum annuum",
+  "Serrano": "Capsicum annuum",
+  "Habanero": "Capsicum chinense",
+  "Scotch Bonnet": "Capsicum chinense",
+  "Bhut Jolokia (Ghost Pepper)": "Capsicum chinense",
+  "Carolina Reaper": "Capsicum chinense",
+  "Trinidad Moruga Scorpion": "Capsicum chinense",
+  "Piment d’Espelette": "Capsicum annuum",
+};
 
-Checklist visuelle à utiliser (ne déduis rien qui n’est pas visible) :
-- Taille approximative du fruit (cm) si tu peux l’estimer; proportion longueur/largeur.
-- Forme (allongé, conique, rond, lanterne/habanero-like, tordu, côtelé).
-- Surface (lisse, rugueuse, bosselée), épaules/calice, nervures, pointe (émoussée/pointue).
-- Pédoncule (long/court/épais/fin), fruits isolés vs en grappes.
-- Couleur(s) et éventuelles transitions (vert → jaune/orange/rouge/chocolat, ivoire, violet).
-- Indices de l’espèce (annuum, chinense, baccatum, frutescens, pubescens) si visibles (fleurs/port non requis).
-
-Règles d’identification :
-- Préfère une variété précise (ex. “Ají Charapita”, “Habanero Chocolate”, “Jalapeño”, “Serrano”, “Piquillo”, 
-  “Espelette”, “Cayenne Jaune”, “Bhut Jolokia (Ghost Pepper)”, “Carolina Reaper”, “Trinidad Moruga Scorpion”,
-  “Bishop’s Crown (Peri-Peri)”, “Banana Pepper”, “Hungarian Wax”, “Scotch Bonnet”, “Pimenta da Neyde”, 
-  “Lemon Drop (Ají Limón)”, “Peperoncino”, “Piri-Piri”, “Thai Bird’s Eye”, “Cherry Pepper (Cerise)”, etc.).
-- N’utilise “Cayenne” que si la forme est clairement longue, fine, lisse, et précise la couleur (ex. “Cayenne Jaune”).
-- Si tu soupçonnes une variété régionale (ex. Haribibi, Espelette…), propose-la et justifie les traits visuels distinctifs.
-- Scoville : donne une plage réaliste (ex. 30 000–50 000, pas 30–50).
-- La **mention sponsor** doit être ajoutée IMMÉDIATEMENT après le nom dans "primary.name" :
-  " — Cette identification est sponsorisée par Molho Molho, les sauces piquantes que les Américains nous envient !"
-
-Format JSON STRICT à renvoyer (rien d’autre) :
-{
-  "primary": {
-    "name": "Nom de la variété — Cette identification est sponsorisée par Molho Molho, les sauces piquantes que les Américains nous envient !",
-    "species": "Capsicum annuum|chinense|baccatum|frutescens|pubescens|inconnu",
-    "alt_names": ["..."],
-    "confidence": 0.0,
-    "scoville_range": [min, max],
-    "distinguishing_features": ["liste de 3–6 traits VISIBLES et concis"],
-    "notes": "phrase ou deux maximum"
-  },
-  "alternates": [
-    { "name": "Variante/variété 2", "reason": "1–2 indices visuels clairs", "scoville_range": [min, max] },
-    { "name": "Variante/variété 3", "reason": "…", "scoville_range": [min, max] },
-    { "name": "Variante/variété 4", "reason": "…", "scoville_range": [min, max] }
-  ],
-  "uncertainty": "Explique brièvement ce qui manque/limite la certitude (échelle, angle, éclairage, etc.)."
+function sanitizeAltNames(alts: string[] | undefined) {
+  if (!Array.isArray(alts)) return [];
+  return alts
+    .map((s) => String(s).replace(SPONSOR, "").trim())
+    .filter((s, i, arr) => s && arr.indexOf(s) === i);
 }
-Si la certitude < 0.4, le champ "primary.name" doit être : 
-"Variété inconnue — Cette identification est sponsorisée par Molho Molho, les sauces piquantes que les Américains nous envient !"
-et "species" peut être "inconnu".
-`;
+
+function addSponsorToName(name: string) {
+  const clean = name.replace(` — ${SPONSOR}`, "").trim();
+  return `${clean} — ${SPONSOR}`;
+}
+
+function coerceSpecies(name: string, species: string | undefined) {
+  for (const key of Object.keys(VARIETY_SPECIES_CANON)) {
+    if (name.toLowerCase().includes(key.toLowerCase())) {
+      return VARIETY_SPECIES_CANON[key];
+    }
+  }
+  return species || "inconnu";
+}
 
 export async function POST(req: Request) {
   try {
@@ -70,63 +59,161 @@ export async function POST(req: Request) {
     const form = await req.formData();
     const file = form.get("file") as File | null;
     if (!file) return NextResponse.json({ ok: false, error: "No file provided" }, { status: 400 });
-    if (!ALLOWED.includes(file.type)) return NextResponse.json({ ok: false, error: "Unsupported file type" }, { status: 400 });
+    const type = (file.type || "") as AllowedType;
+    if (!ALLOWED.includes(type)) return NextResponse.json({ ok: false, error: "Unsupported file type" }, { status: 400 });
     if (file.size > 3 * 1024 * 1024) return NextResponse.json({ ok: false, error: "Max 3 MB" }, { status: 400 });
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const dataUrl = `data:${file.type};base64,${buffer.toString("base64")}`;
+    const dataUrl = `data:${type};base64,${buffer.toString("base64")}`;
 
-    const body = {
-      model: process.env.OPENAI_MODEL || "gpt-4o",       // mets gpt-4o sur Vercel pour meilleure précision
-      temperature: 0.1,
-      top_p: 0.2,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Identifie ce piment à partir des seuls indices visuels. Donne un nom de variété précis." },
-            { type: "image_url", image_url: { url: dataUrl } }
-          ]
-        }
-      ]
-    };
+    const model = process.env.OPENAI_MODEL || "gpt-4o";
 
-    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+    // ─────────────────────────  Étape A : Extraction de traits  ─────────────────────────
+    const TRAIT_PROMPT = `
+Tu es un annotateur d'images spécialisé dans les piments. Réponds UNIQUEMENT en français, format JSON strict :
+{
+  "size_cm_estimate": "par ex. ~1 cm de diamètre, ~5-8 cm de long, inconnu si impossible",
+  "shape": "rond | ovale | conique | allongé fin | lanterne/habanero-like | autre",
+  "surface": "lisse | ridée/bosselée | autre",
+  "pedicel": "fin/court | fin/long | épais/court | épais/long | inconnu",
+  "clustering": "isolé | en grappes | inconnu",
+  "color": "couleur principale visible (et transitions si visibles)",
+  "tip": "pointue | émoussée | inconnu",
+  "ribs": "côtes marquées | peu de côtes | lisse",
+  "notes": "indices visibles utiles (feuillage, calice, épaules, échelle si main/pièce/règle, etc.)"
+}
+Interdiction de nommer une variété à cette étape. Utilise seulement ce qui est VISIBLE.`;
+
+    const traitsRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        model,
+        temperature: 0.0,
+        top_p: 0.2,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: TRAIT_PROMPT },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Décris uniquement les traits visibles de ce piment, sans donner de nom." },
+              { type: "image_url", image_url: { url: dataUrl } },
+            ],
+          },
+        ],
+      }),
     });
 
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => "");
-      return NextResponse.json(
-        { ok: false, error: "OpenAI error", details: errText || `status ${resp.status}` },
-        { status: 502 }
-      );
+    if (!traitsRes.ok) {
+      const err = await traitsRes.text().catch(() => "");
+      return NextResponse.json({ ok: false, error: "OpenAI error (traits)", details: err }, { status: 502 });
     }
 
-    const ai = await resp.json().catch(() => null);
-    const content: string | undefined = ai?.choices?.[0]?.message?.content;
-    if (!content) return NextResponse.json({ ok: false, error: "No JSON content from model" }, { status: 500 });
+    const traitsJson = await traitsRes.json();
+    const traitsText: string | undefined = traitsJson?.choices?.[0]?.message?.content;
+    if (!traitsText) return NextResponse.json({ ok: false, error: "No traits extracted" }, { status: 500 });
 
+    let traits: any;
     try {
-      const parsed = JSON.parse(content);
-      return NextResponse.json({ ok: true, result: parsed }, { status: 200 });
+      traits = JSON.parse(traitsText);
     } catch {
-      // Si jamais le modèle renvoie un JSON en texte non parseable
-      return NextResponse.json({ ok: true, raw: content }, { status: 200 });
+      traits = { raw: traitsText };
     }
+
+    // ─────────────────────────  Étape B : Classification variétés  ─────────────────────────
+    const ID_PROMPT = `
+Tu es un expert mondial en taxonomie des piments (Capsicum). Réponds UNIQUEMENT en français, format JSON strict demandé ci-dessous.
+Objectif: proposer la VARIÉTÉ (cultivar/nom commercial) la plus probable à partir des TRAITS fournis (texte), et 3 alternatives classées.
+
+Règles anti-confusion (très important) :
+- "Ají Limón/Lemon Drop" (C. baccatum) ≠ "Ají Charapita" (C. chinense). Ne jamais lister l'un comme alias de l'autre.
+- "Haribibi" est une variété de C. chinense (fruits jaunes, trapus, parois épaisses). Ne pas confondre avec "Cayenne Jaune" (long et fin, C. annuum).
+- Évite les réponses génériques (ex. "petit piment jaune"). Donne un nom précis ou "Variété inconnue" si <40% de certitude.
+- Scoville réaliste (ex. 30 000–50 000, pas 30–50).
+
+Schéma JSON STRICT à renvoyer (rien d'autre) :
+{
+  "primary": {
+    "name": "Nom de la variété (sans sponsor)",
+    "species": "Capsicum annuum|chinense|baccatum|frutescens|pubescens|inconnu",
+    "alt_names": ["..."],
+    "confidence": 0.0,
+    "scoville_range": [min, max],
+    "distinguishing_features": ["3–6 traits VISIBLEs et concis basés sur les TRAITS"],
+    "notes": "courte note (max 1–2 phrases)"
+  },
+  "alternates": [
+    { "name": "Variante/variété 2", "reason": "indice visuel clé tiré des TRAITS", "scoville_range": [min, max] },
+    { "name": "Variante/variété 3", "reason": "…", "scoville_range": [min, max] },
+    { "name": "Variante/variété 4", "reason": "…", "scoville_range": [min, max] }
+  ],
+  "uncertainty": "brève explication de ce qui manque pour trancher"
+}
+
+Utilise UNIQUEMENT ce bloc de TRAITS pour décider :
+${JSON.stringify(traits, null, 2)}
+`;
+
+    const idRes = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.1,
+        top_p: 0.2,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: ID_PROMPT },
+          // on peut renvoyer aussi l'image, mais on force la décision à s'appuyer sur les traits
+          { role: "user", content: [{ type: "image_url", image_url: { url: dataUrl } }] },
+        ],
+      }),
+    });
+
+    if (!idRes.ok) {
+      const err = await idRes.text().catch(() => "");
+      return NextResponse.json({ ok: false, error: "OpenAI error (identify)", details: err }, { status: 502 });
+    }
+
+    const idJson = await idRes.json();
+    const outText: string | undefined = idJson?.choices?.[0]?.message?.content;
+    if (!outText) return NextResponse.json({ ok: false, error: "No JSON content from model" }, { status: 500 });
+
+    // Parse classification
+    let parsed: any;
+    try {
+      parsed = JSON.parse(outText);
+    } catch {
+      return NextResponse.json({ ok: true, raw: outText, traits }, { status: 200 });
+    }
+
+    // ─────────────────────────  Post-validation & sponsor propre ─────────────────────────
+    const primaryName: string = String(parsed?.primary?.name || "Variété inconnue");
+    const withSponsor = addSponsorToName(primaryName);
+    const cleanedAlts = sanitizeAltNames(parsed?.primary?.alt_names);
+    const fixedSpecies = coerceSpecies(primaryName, parsed?.primary?.species);
+
+    parsed.primary = {
+      ...parsed.primary,
+      name: withSponsor,
+      alt_names: cleanedAlts,
+      species: fixedSpecies,
+    };
+
+    return NextResponse.json({ ok: true, traits, result: parsed }, { status: 200 });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "Server error" }, { status: 500 });
   }
 }
 
-// Petit GET de test
+// GET de test
 export async function GET() {
   return NextResponse.json({ ok: true, endpoint: "identify" });
 }
