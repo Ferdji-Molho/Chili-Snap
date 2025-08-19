@@ -253,7 +253,6 @@ export default function Page() {
           <input
             type="file"
             accept="image/*"
-            capture="environment"
             onChange={onPick}
             className="block w-full border rounded-xl p-3"
           />
@@ -297,10 +296,6 @@ export default function Page() {
             <ResultCard data={result} />
           </section>
         )}
-
-        <footer className="text-xs text-gray-500 text-center pt-4 border-t">
-          Powered by AI vision models • Keep API keys secure on server side
-        </footer>
       </div>
     </main>
   );
